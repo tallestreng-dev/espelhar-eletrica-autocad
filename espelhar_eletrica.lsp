@@ -1,5 +1,5 @@
 ;;; =========================================================================
-;;; ESPELHAR_ELETRICA.LSP - v17.0
+;;; ESPELHAR_ELETRICA.LSP - v18.0
 ;;; Espelhamento Inteligente para Projetos Elétricos no AutoCAD
 ;;; =========================================================================
 ;;; 1. ESPELHO HORIZONTAL (Cima / Baixo) - 100% Preservado:
@@ -9,10 +9,12 @@
 ;;;      Deslocamento ZERO para fora da marcação! Ficam apoiados apontando para CIMA!
 ;;;    - Textos da fiação (layer *FIA*): bitola # desce 0.4 e circuitos sobem 0.4
 ;;;    - Tomadas e demais layers 100% protegidos
-;;; 2. ESPELHO VERTICAL (Esquerda / Direita) - Ordem 1, 2, 3... e Distância 0.1250:
+;;; 2. ESPELHO VERTICAL (Esquerda / Direita) - Ordem, Distância 0.1250 e Bitola (#):
 ;;;    - Sentido correto: blocos reespelhados com ganchos para a ESQUERDA
 ;;;    - Ordem correta rigorosamente mantida: o circuito que está na posição 1
-;;;      continua na posição 1, o da 2 na 2, e assim sucessivamente (texto + bloco)
+;;;      continua na posição 1, o da 2 na 2, e assim sucessivamente
+;;;    - Bitolas com '#' acompanham fielmente o circuito em que estavam!
+;;;      (se a posição 1 não tem continua sem, se a posição 2 tem continua na 2, etc.)
 ;;;    - Espaçamento de 0.1250 milimetricamente mantido entre blocos adjacentes!
 ;;;    - Textos perfeitamente centralizados acima de cada bloco respectivo
 ;;;    - Desvira interruptores ('S') e tags de iluminação no próprio centro
@@ -236,11 +238,13 @@
 ;;; 1. Reespelha cada bloco/traço condutor no próprio centro (ganchos para a ESQUERDA)
 ;;; 2. Distribui os blocos com a distância exata de 0.1250 entre blocos adjacentes!
 ;;; 3. Centraliza cada texto de circuito exatamente sobre o seu bloco respectivo
+;;; 4. Faz a bitola (#) acompanhar rigorosamente o circuito em que estava!
 ;;; -------------------------------------------------------------------------
 (defun elet:corrigir-fiacao-espelho-vertical (ss / i ent elist typ lay tStr pt h
-                                                  circTexts wireEnts newWireEnts
+                                                  circTexts hashTexts wireEnts newWireEnts
                                                   obj minPt maxPt bMin bMax bCenter diag
                                                   lastE nextE wItem bestT bestDist dist tItem tEnt tPt tX tY
+                                                  hItem hCenter hX hY hEnt hMinPt hMaxPt hObj dxH hPt hListCol
                                                   colMap groups colItem foundG newGroups
                                                   grp k sortedCols orderCols firstMinX xCurr
                                                   tEntCol wListCol currTX colMinX colMaxX
@@ -266,6 +270,43 @@
             (if (<= h 0.15)
               (setq circTexts (cons (list ent (elet:get-text-pt elist)) circTexts))
             )
+          )
+        )
+      )
+    )
+    (setq i (1+ i))
+  )
+  
+  ;; 1b. Coleta textos de bitola '#' (ex: #2,5, #4, etc.)
+  (setq hashTexts '()
+        i 0)
+  (while (< i (sslength ss))
+    (setq ent   (ssname ss i)
+          elist (entget ent)
+          typ   (cdr (assoc 0 elist))
+          lay   (strcase (cdr (assoc 8 elist))))
+    (if (and (or (wcmatch lay "*FIA*") (wcmatch lay "*CIRC*") (wcmatch lay "*ELET*"))
+             (or (= typ "TEXT") (= typ "MTEXT")))
+      (progn
+        (setq tStr (cdr (assoc 1 elist)))
+        (if (vl-string-search "#" tStr)
+          (progn
+            (setq hMinPt nil hMaxPt nil)
+            (vl-catch-all-apply
+              '(lambda ()
+                 (setq obj (vlax-ename->vla-object ent))
+                 (vla-GetBoundingBox obj 'hMinPt 'hMaxPt)
+               )
+            )
+            (if (and hMinPt hMaxPt)
+              (setq bMin (vlax-safearray->list hMinPt)
+                    bMax (vlax-safearray->list hMaxPt)
+                    hCenter (list (/ (+ (car bMin) (car bMax)) 2.0)
+                                  (/ (+ (cadr bMin) (cadr bMax)) 2.0)
+                                  0.0))
+              (setq hCenter (elet:get-text-pt elist))
+            )
+            (setq hashTexts (cons (list ent hCenter) hashTexts))
           )
         )
       )
@@ -321,14 +362,15 @@
   )
   (setq wireEnts newWireEnts)
   
-  ;; 4. Associa cada entidade condutora ao texto de circuito mais próximo
+  ;; 4. Inicializa mapa de colunas: (tX tY tEnt wList hList)
   (setq colMap '())
   (foreach tItem circTexts
     (setq tEnt (car tItem)
           tPt  (cadr tItem)
-          colMap (cons (list (car tPt) (cadr tPt) tEnt '()) colMap))
+          colMap (cons (list (car tPt) (cadr tPt) tEnt '() '()) colMap))
   )
   
+  ;; Associa cada bloco condutor ao texto de circuito mais próximo diretamente acima
   (foreach wItem wireEnts
     (setq ent     (car wItem)
           bCenter (cadr wItem)
@@ -355,7 +397,44 @@
       (setq colMap
         (mapcar '(lambda (col)
                    (if (eq (nth 2 col) bestT)
-                     (list (nth 0 col) (nth 1 col) (nth 2 col) (cons ent (nth 3 col)))
+                     (list (nth 0 col) (nth 1 col) (nth 2 col) (cons ent (nth 3 col)) (nth 4 col))
+                     col
+                   ))
+                colMap)
+      )
+    )
+  )
+  
+  ;; Associa cada texto com '#' (bitola) ao texto de circuito correspondente diretamente acima
+  (foreach hItem hashTexts
+    (setq ent     (car hItem)
+          hCenter (cadr hItem)
+          hX      (car hCenter)
+          hY      (cadr hCenter)
+          bestT   nil
+          bestDist 999.0)
+    (foreach tItem circTexts
+      (setq tPt  (cadr tItem)
+            tX   (car tPt)
+            tY   (cadr tPt))
+      ;; Deve estar abaixo do texto de circuito em Y (entre 0.10m e 0.90m) e próximo em X (<= 0.35m)
+      (if (and (<= (- tY hY) 0.90)
+               (>= (- tY hY) 0.10)
+               (<= (abs (- hX tX)) 0.35))
+        (progn
+          (setq dist (abs (- hX tX)))
+          (if (< dist bestDist)
+            (setq bestDist dist
+                  bestT    (car tItem))
+          )
+        )
+      )
+    )
+    (if bestT
+      (setq colMap
+        (mapcar '(lambda (col)
+                   (if (eq (nth 2 col) bestT)
+                     (list (nth 0 col) (nth 1 col) (nth 2 col) (nth 3 col) (cons ent (nth 4 col)))
                      col
                    ))
                 colMap)
@@ -426,10 +505,11 @@
         (setq orderCols (reverse sortedCols))
         
         ;; Posiciona cada circuito da lista orderCols sequencialmente da esquerda para a direita
-        ;; mantendo a distância exata de 0.1250 entre blocos adjacentes!
+        ;; mantendo a distância exata de 0.1250 entre blocos adjacentes e levando a bitola (#)!
         (foreach col orderCols
           (setq tEntCol  (nth 2 col)
                 wListCol (nth 3 col)
+                hListCol (nth 4 col)
                 tPt      (elet:get-text-pt (entget tEntCol))
                 currTX   (car tPt))
           
@@ -473,6 +553,29 @@
               (if (> (abs dxT) 0.0005)
                 (command "_.MOVE" tEntCol "" "_non" '(0.0 0.0 0.0) "_non" (list dxT 0.0 0.0))
               )
+              ;; Move os textos de bitola '#' da coluna, centralizando-os abaixo do bloco
+              (foreach hEnt hListCol
+                (setq hMinPt nil hMaxPt nil)
+                (vl-catch-all-apply
+                  '(lambda ()
+                     (setq hObj (vlax-ename->vla-object hEnt))
+                     (vla-GetBoundingBox hObj 'hMinPt 'hMaxPt)
+                   )
+                )
+                (if (and hMinPt hMaxPt)
+                  (setq bMin (vlax-safearray->list hMinPt)
+                        bMax (vlax-safearray->list hMaxPt)
+                        hCenter (/ (+ (car bMin) (car bMax)) 2.0)
+                        dxH (- wNewC hCenter))
+                  (progn
+                    (setq hPt (elet:get-text-pt (entget hEnt))
+                          dxH (- wNewC (car hPt)))
+                  )
+                )
+                (if (> (abs dxH) 0.0005)
+                  (command "_.MOVE" hEnt "" "_non" '(0.0 0.0 0.0) "_non" (list dxH 0.0 0.0))
+                )
+              )
               
               ;; Próximo bloco começa exatamente em (fim deste bloco + 0.1250)!
               (setq xCurr (+ xCurr wWidth *ELET_FIA_GAP*))
@@ -482,6 +585,13 @@
               (setq dxT (- xCurr currTX))
               (if (> (abs dxT) 0.0005)
                 (command "_.MOVE" tEntCol "" "_non" '(0.0 0.0 0.0) "_non" (list dxT 0.0 0.0))
+              )
+              (foreach hEnt hListCol
+                (setq hPt (elet:get-text-pt (entget hEnt))
+                      dxH (- xCurr (car hPt)))
+                (if (> (abs dxH) 0.0005)
+                  (command "_.MOVE" hEnt "" "_non" '(0.0 0.0 0.0) "_non" (list dxH 0.0 0.0))
+                )
               )
               (setq xCurr (+ xCurr 0.15 *ELET_FIA_GAP*))
             )
@@ -748,8 +858,9 @@
 
 ;;; Mensagem de carregamento
 (princ "\n========================================================")
-(princ "\n  ESPELHAR_ELETRICA v17.0 CARREGADO COM SUCESSO!")
+(princ "\n  ESPELHAR_ELETRICA v18.0 CARREGADO COM SUCESSO!")
 (princ "\n  - Ordem 1, 2, 3... e Distância 0.1250 entre blocos de fiação")
+(princ "\n  - Bitola (#) acompanha rigorosamente o circuito de origem")
 (princ "\n  - Circuitos reespelhados, ordenados e centralizados")
 (princ "\n  - Horizontal preservado 100% conforme aprovado")
 (princ "\n  COMANDOS: EE (Espelhar) | DV (Desvirar) | DF (Fiação) | TF (Trocar)")

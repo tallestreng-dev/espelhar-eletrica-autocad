@@ -1,4 +1,4 @@
-# ⚡ Espelhar Elétrica (AutoCAD AutoLISP) - v17.0
+# ⚡ Espelhar Elétrica (AutoCAD AutoLISP) - v18.0
 
 Plugin profissional em **AutoLISP** para **AutoCAD** desenvolvido para resolver o problema clássico de espelhamento (`MIRROR`) em projetos elétricos prediais e residenciais.
 
@@ -26,6 +26,7 @@ O comando nativo `MIRROR` do AutoCAD frequentemente inverte a simbologia elétri
   - O circuito da **posição 1** permanece na **posição 1 (à esquerda)**.
   - O circuito da **posição 2** permanece na **posição 2 (no meio)**.
   - O circuito da **posição 3** permanece na **posição 3 (à direita)**.
+- **Vinculação de Bitola (`#`):** Os textos de bitola (ex: `#2,5`) acompanham fielmente o bloco de circuito em que estavam: se a posição 1 não tem continua sem, se a posição 2 possui continua na posição 2, perfeitamente centralizados abaixo do bloco condutor.
 - **Distância Exata de 0.1250:** Mantém o vão livre milimétrico de **`0.1250`** entre cada bloco de condutores adjacente.
 - **Alinhamento dos Textos:** Cada texto de circuito fica perfeitamente centralizado acima do seu respectivo bloco de condutores.
 
