@@ -1,0 +1,17 @@
+# AutoCAD temporary and lock files
+*.bak
+*.dwl
+*.dwl2
+*.ac$
+*.dmp
+*.err
+*~
+
+# Windows thumbnail and desktop files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Node / Scratch files
+node_modules/
+*.log
